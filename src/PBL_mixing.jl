@@ -264,7 +264,8 @@ function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, 
             end
             
             # Apply mixing terms to du
-            du_col = permutedims(view(du_reshaped, :, i, j, :), (2,1))
+            # Create contribution array for this column
+            du_contrib = zeros(nz, nspec)
             for l in 1:nz
                 if l < imix
                     # Fully mixed layers
@@ -278,12 +279,12 @@ function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, 
                 end
                 
                 for n in 1:nspec
-                    du_col[l, n] += fpbl_l * (cmeans[n] - col[l, n]) / op.τ
+                    du_contrib[l, n] = fpbl_l * (cmeans[n] - col[l, n]) / op.τ
                 end
             end
             
-            # Write back permuted du
-            @inbounds @views du_reshaped[:, i, j, :] .= permutedims(du_col, (2,1))
+            # Add contributions back to du_reshaped (permuted)
+            @inbounds @views du_reshaped[:, i, j, :] .+= permutedims(du_contrib, (2,1))
         end
         
         # du is already modified in-place through the view
