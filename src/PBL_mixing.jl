@@ -1,4 +1,4 @@
-export PBLMixingCallback
+export PBLMixingOperator
 
 # Physical constants
 const SCALE_HEIGHT = 8000.0  # m, atmospheric scale height
@@ -163,29 +163,31 @@ function pbl_obs_function(mtk_sys, coord_args, v, T)
 end
 
 """
-    PBLMixingCallback <: EarthSciMLBase.Operator
+    PBLMixingOperator <: EarthSciMLBase.Operator
 
-A callback that applies planetary boundary layer (PBL) mixing to tracer fields at periodic intervals.
-PBL mixing is a discrete process that redistributes tracers vertically within each grid column.
+An operator that adds planetary boundary layer (PBL) mixing terms to the ODE system.
+PBL mixing is implemented as: dC/dt = fpbl * (Cmean - C) / τ
+where τ is the mixing timescale (default 30 minutes).
 """
-mutable struct PBLMixingCallback
-    interval::Float64  # Time interval between mixing events (seconds)
-    every_step::Bool   # If true, apply at every solver step regardless of interval
-    
-    function PBLMixingCallback(interval::Float64 = 3600.0; every_step::Bool = false)
-        new(interval, every_step)
+mutable struct PBLMixingOperator <: EarthSciMLBase.Operator
+    τ::Float64  # Mixing timescale (seconds)
+
+    function PBLMixingOperator(τ::Float64 = 1800.0)  # Default 30 minutes
+        new(τ)
     end
 end
 
 """
-    EarthSciMLBase.init_callback(cb::PBLMixingCallback, csys::CoupledSystem, sys_mtk, coord_args, domain::DomainInfo, alg)
+    EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, sys_mtk,
+        coord_args, domain::DomainInfo, u0, p, alg::MapAlgorithm)
 
-Initialize the PBL mixing callback.
+Create the SciML operator for PBL mixing ODE terms.
 """
-function EarthSciMLBase.init_callback(cb::PBLMixingCallback, csys::CoupledSystem, sys_mtk, coord_args, domain::DomainInfo, alg)
+function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, sys_mtk,
+        coord_args, domain::DomainInfo, u0, p, alg::MapAlgorithm)
     
     # Get data accessor functions
-    vars = EarthSciMLBase.get_needed_vars(cb, csys, sys_mtk, domain)
+    vars = EarthSciMLBase.get_needed_vars(op, csys, sys_mtk, domain)
     @assert length(vars) == 3 # PBLH, δxδlon, δyδlat
     
     T = eltype(domain)
@@ -207,19 +209,18 @@ function EarthSciMLBase.init_callback(cb::PBLMixingCallback, csys::CoupledSystem
     # Get number of species from the system unknowns
     nspec = length(unknowns(sys_mtk))
     
-    # Create the mixing function
-    function apply_pbl_mixing!(integrator)
-        u = integrator.u
-        p = integrator.p
-        t = integrator.t
-        
-        # Get the expected dimensions from the domain
-        nx = length(grd[1])
-        ny = length(grd[2])
-        nz = length(grd[3])
-        
-        # Reshape to (nspec, nx, ny, nz) - same as NetCDF outputter
+    # Get dimensions
+    nx = length(grd[1])
+    ny = length(grd[2])
+    nz = length(grd[3])
+    
+    # Reshape u0 to understand the structure
+    u0_reshaped = reshape(u0, nspec, nx, ny, nz)
+    
+    function pbl_mixing_du(du, u, p, t)
+        # Reshape inputs
         u_reshaped = reshape(u, nspec, nx, ny, nz)
+        du_reshaped = reshape(du, nspec, nx, ny, nz)
         
         # Loop over horizontal grid points
         for i in 1:nx, j in 1:ny
@@ -235,30 +236,63 @@ function EarthSciMLBase.init_callback(cb::PBLMixingCallback, csys::CoupledSystem
             # Calculate grid area (m²)
             area = dx * dy * δxδlon_val * δyδlat_val
             
-            # Extract column data as (nz, nspec) for mixing algorithm
-            col = permutedims(view(u_reshaped, :, i, j, :), (2,1))
-            
-            # Apply PBL mixing
-            imix, fpbl = compute_imix_fpbl(pedge_domain, pblh_val)
+            # Compute PBL parameters
+            imix, fpbl_partial = compute_imix_fpbl(pedge_domain, pblh_val)
             ad = air_mass_from_pressure(pedge_domain, area)
-            pbl_full_mix!(col, ad, imix, fpbl)
             
-            # Write back to main array
-            @inbounds @views u_reshaped[:, i, j, :] .= permutedims(col, (2,1))
+            # Extract column data
+            col = view(u_reshaped, :, i, j, :)
+            
+            # Compute Cmean for each species
+            cmeans = zeros(nspec)
+            for n in 1:nspec
+                # Calculate total mass in PBL
+                total_mass = 0.0
+                total_conc_mass = 0.0
+                
+                for l in 1:imix-1
+                    total_mass += ad[l]
+                    total_conc_mass += ad[l] * col[n, l]
+                end
+                # Partial top layer
+                if imix <= nz
+                    total_mass += ad[imix] * fpbl_partial
+                    total_conc_mass += ad[imix] * col[n, imix] * fpbl_partial
+                end
+                
+                cmeans[n] = total_mass > 0 ? total_conc_mass / total_mass : 0.0
+            end
+            
+            # Apply mixing terms to du
+            du_col = view(du_reshaped, :, i, j, :)
+            for l in 1:nz
+                if l < imix
+                    # Fully mixed layers
+                    fpbl_l = 1.0
+                elseif l == imix
+                    # Partially mixed top layer
+                    fpbl_l = fpbl_partial
+                else
+                    # Above PBL
+                    fpbl_l = 0.0
+                end
+                
+                for n in 1:nspec
+                    du_col[n, l] += fpbl_l * (cmeans[n] - col[n, l]) / op.τ
+                end
+            end
         end
         
-        # Update the integrator state
-        integrator.u .= u_reshaped[:]
+        # du is already modified in-place through the view
+        nothing
     end
     
-    # Return appropriate callback based on settings
-    if cb.every_step
-        # Use DiscreteCallback to apply at every solver step
-        DiscreteCallback((u, t, integrator) -> true, apply_pbl_mixing!)
-    else
-        # Use PeriodicCallback to apply at specified intervals
-        PeriodicCallback(apply_pbl_mixing!, cb.interval)
-    end
+    FunctionOperator(pbl_mixing_du, u0, p = p)
+end
+
+# Actual implementation is in EarthSciDataExt.jl.
+function EarthSciMLBase.get_needed_vars(::PBLMixingOperator, csys, mtk_sys, domain)
+    error("Could not find a source of PBL data in the coupled system. Valid sources are currently {EarthSciData.GEOSFP}.")
 end
 
 
