@@ -240,8 +240,8 @@ function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, 
             imix, fpbl_partial = compute_imix_fpbl(pedge_domain, pblh_val)
             ad = air_mass_from_pressure(pedge_domain, area)
             
-            # Extract column data
-            col = view(u_reshaped, :, i, j, :)
+            # Extract column data and permute to (nz, nspec) for consistency with callback
+            col = permutedims(view(u_reshaped, :, i, j, :), (2,1))
             
             # Compute Cmean for each species
             cmeans = zeros(nspec)
@@ -252,19 +252,19 @@ function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, 
                 
                 for l in 1:imix-1
                     total_mass += ad[l]
-                    total_conc_mass += ad[l] * col[n, l]
+                    total_conc_mass += ad[l] * col[l, n]
                 end
                 # Partial top layer
                 if imix <= nz
                     total_mass += ad[imix] * fpbl_partial
-                    total_conc_mass += ad[imix] * col[n, imix] * fpbl_partial
+                    total_conc_mass += ad[imix] * col[imix, n] * fpbl_partial
                 end
                 
                 cmeans[n] = total_mass > 0 ? total_conc_mass / total_mass : 0.0
             end
             
             # Apply mixing terms to du
-            du_col = view(du_reshaped, :, i, j, :)
+            du_col = permutedims(view(du_reshaped, :, i, j, :), (2,1))
             for l in 1:nz
                 if l < imix
                     # Fully mixed layers
@@ -278,9 +278,12 @@ function EarthSciMLBase.get_scimlop(op::PBLMixingOperator, csys::CoupledSystem, 
                 end
                 
                 for n in 1:nspec
-                    du_col[n, l] += fpbl_l * (cmeans[n] - col[n, l]) / op.τ
+                    du_col[l, n] += fpbl_l * (cmeans[n] - col[l, n]) / op.τ
                 end
             end
+            
+            # Write back permuted du
+            @inbounds @views du_reshaped[:, i, j, :] .= permutedims(du_col, (2,1))
         end
         
         # du is already modified in-place through the view
