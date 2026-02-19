@@ -167,12 +167,12 @@ end
 
 An operator that adds planetary boundary layer (PBL) mixing terms to the ODE system.
 PBL mixing is implemented as: dC/dt = fpbl * (Cmean - C) / τ
-where τ is the mixing timescale (default 30 minutes).
+where τ is the mixing timescale (default 1 second for rapid mixing matching callback behavior).
 """
 mutable struct PBLMixingOperator <: EarthSciMLBase.Operator
     τ::Float64  # Mixing timescale (seconds)
 
-    function PBLMixingOperator(τ::Float64 = 1800.0)  # Default 30 minutes
+    function PBLMixingOperator(τ::Float64 = 1.0)  # Default 1 second for rapid mixing
         new(τ)
     end
 end
