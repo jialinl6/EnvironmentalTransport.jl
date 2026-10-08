@@ -26,9 +26,12 @@ end
     for (s, result) in (("in-place", result_iip), ("out-of-place", result_oop))
         @testset "$s" begin
             result = reshape(result, size(c))
-            @test result[2, :, 3, 4] ≈ [0.0, -24.0, -16.0, -32.0, -36.0, -70.0]
-            @test result[2, 3, :, 4] ≈ [0.0, -24.0, -16.0, -16.0, -36.0, -70.0]
-            @test result[2, 3, 4, :] ≈ [0.0, -24.0, -28.0, -16.0, -36.0, -70.0]
+            # Sum over x, y, z of the advective-form upwind1 tendency. The flux form
+            # gave [0, -24, -16, -32, -36, -70] etc.; the difference is the
+            # ϕ·(U[2] − U[1])/Δz term, since these face winds are divergent.
+            @test result[2, :, 3, 4] ≈ [0.0, -36.0, -40.0, -68.0, -84.0, -100.0]
+            @test result[2, 3, :, 4] ≈ [0.0, -36.0, -40.0, -52.0, -84.0, -100.0]
+            @test result[2, 3, 4, :] ≈ [0.0, -36.0, -52.0, -52.0, -84.0, -100.0]
             @test all(result[1, :, :, :] .≈ 0.0)
             @test all(result[3, :, :, :] .≈ 0.0)
         end
