@@ -159,10 +159,10 @@ end
                                 @testset "Δz $d3" begin
                                     dudt = [
                                         stencil(
-                                                u0[(i - lpad):(i + rpad)],
-                                                v[i:(i + 1)], Δt,
-                                                Δz[i]
-                                            )
+                                            u0[(i - lpad):(i + rpad)],
+                                            v[i:(i + 1)], Δt,
+                                            Δz[i]
+                                        )
                                             for i in (1 + lpad):(N - rpad)
                                     ]
                                     mass_change = sum(dudt .* Δz[(1 + lpad):(N - rpad)])

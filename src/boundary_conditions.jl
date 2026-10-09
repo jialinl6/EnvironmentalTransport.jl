@@ -187,7 +187,8 @@ function resolve_species_bc(bc::SpeciesConstantBC, x, species_vars)
             # bare species name (namespace and `(t)` stripped) or on the full
             # variable string. A substring match would resolve "O3" to BrNO3.
             species_idx = findfirst(
-                var -> _bc_species_name(var) == key || string(var) == key, species_vars)
+                var -> _bc_species_name(var) == key || string(var) == key, species_vars
+            )
             if species_idx !== nothing
                 resolved_values[species_idx] = eltype(x)(value)
             else

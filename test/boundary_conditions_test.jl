@@ -211,6 +211,7 @@ end
     # A name that is only a substring of a variable is not found.
     bc_sub = SpeciesConstantBC(Dict("NO" => 1.0), 0.0)
     arr_sub = @test_logs (:warn, r"Species 'NO' not found") resolve_species_bc(
-        bc_sub, zeros(5, 3, 3, 2), species_vars)
+        bc_sub, zeros(5, 3, 3, 2), species_vars
+    )
     @test isempty(arr_sub.values)
 end
