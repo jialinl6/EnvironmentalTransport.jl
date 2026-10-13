@@ -166,12 +166,11 @@ The sub-cycling needs to know the outer time step: if `Δt` is not finite (e.g.
 `NaN`) it is disabled and the plain tendency is returned everywhere.
 """
 function advection_op(
-        u_prototype, stencil, v_fs, Δ_fs, Δt, bc_type, alg::MapAlgorithm;
+        u_prototype::AbstractArray{T}, stencil, v_fs, Δ_fs, Δt, bc_type, alg::MapAlgorithm;
         p = NullParameters(), max_subcycles::Integer = 100
-    )
+    ) where {T}
     @assert length(size(u_prototype)) == 4 "Advection operator only supports 4D arrays."
     sz = size(u_prototype)
-    T = eltype(u_prototype)
     v_fs = tuple(v_fs...)
     Δ_fs = tuple(Δ_fs...)
     nspec, nx, ny, nz = sz
